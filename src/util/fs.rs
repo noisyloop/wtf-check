@@ -162,6 +162,13 @@ impl Fs {
         super::sha256::hash_reader(f.take(256 * 1024 * 1024))
     }
 
+    /// Full SHA-256 or MD5 of a regular file plus its size (no size cap).
+    pub fn digest_full(&self, logical: &Path, md5: bool) -> io::Result<(String, u64)> {
+        let (f, m) = self.open_regular(logical)?;
+        let h = if md5 { super::md5::hash_reader(f)? } else { super::sha256::hash_reader(f)? };
+        Ok((h, m.len()))
+    }
+
     /// Depth-limited walk that never follows symlinks. `f` receives the
     /// logical path, its lstat metadata and depth (1 = direct child), and
     /// returns whether to descend into it (only meaningful for directories).

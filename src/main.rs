@@ -1,5 +1,6 @@
 //! wtf-check: a read-only Linux persistence auditor (std only).
 
+mod allow;
 mod baseline;
 mod checks;
 mod ctx;
@@ -30,6 +31,8 @@ struct Opts {
     save_baseline: Option<PathBuf>,
     baseline: Option<PathBuf>,
     min_severity: Option<Severity>,
+    deep: bool,
+    allow: Option<PathBuf>,
 }
 
 #[derive(Debug, PartialEq)]
@@ -57,6 +60,8 @@ OPTIONS:
     --save-baseline FILE    Write hashes of every checked item to FILE
     --baseline FILE         Report only items new/changed since FILE
     --min-severity LEVEL    Hide findings below LEVEL (info|low|med|high)
+    --deep                  integrity: verify every package file, not only binaries/libs/PAM
+    --allow FILE            Suppress reviewed findings (one path/subject pattern per line)
     -h, --help              Show this help
     -V, --version           Show version
 
@@ -106,6 +111,8 @@ fn parse_args(args: Vec<String>) -> Result<Action, String> {
             "-h" | "--help" => return Ok(Action::Help),
             "-V" | "--version" => return Ok(Action::Version),
             "--json" => o.json = true,
+            "--deep" => o.deep = true,
+            "--allow" => o.allow = Some(PathBuf::from(value("--allow")?)),
             "--no-color" | "--no-colour" => o.no_color = true,
             "--root" => o.root = PathBuf::from(value("--root")?),
             "--only" => o.only = Some(parse_list(&value("--only")?)?),
@@ -129,8 +136,10 @@ fn run(o: Opts) -> Result<u8, String> {
     }
     // Load the baseline first so a bad file fails fast.
     let base = o.baseline.as_deref().map(baseline::load).transpose()?;
+    let allow = o.allow.as_deref().map(allow::Allow::load).transpose()?;
 
-    let ctx = Ctx::new(root);
+    let mut ctx = Ctx::new(root);
+    ctx.deep = o.deep;
     let selected: Vec<&checks::Check> = checks::CHECKS
         .iter()
         .filter(|c| o.only.as_ref().is_none_or(|l| l.iter().any(|n| n == c.name)))
@@ -159,6 +168,13 @@ fn run(o: Opts) -> Result<u8, String> {
         ctx.note(format!("baseline with {} items saved to {}", inventory.len(), p.display()));
     }
 
+    if let Some(a) = &allow {
+        let before = findings.len();
+        findings.retain(|f| !a.allows(f));
+        if before > findings.len() {
+            ctx.note(format!("{} findings suppressed by the allowlist", before - findings.len()));
+        }
+    }
     findings.sort_by(|a, b| b.severity.cmp(&a.severity).then_with(|| a.check.cmp(b.check)).then_with(|| a.path.cmp(&b.path)));
     let worst = findings.iter().map(|f| f.severity).max();
     let shown: Vec<Finding> = match o.min_severity {

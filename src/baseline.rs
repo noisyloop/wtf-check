@@ -74,7 +74,8 @@ fn rest_is_path(key: &str) -> bool {
 
 fn kind_severity(key: &str) -> Severity {
     match key.split(':').next().unwrap_or("") {
-        "ebpf" | "ioc" => Severity::High,
+        "ebpf" | "ioc" | "rootkit" => Severity::High,
+        "network" | "integrity" => Severity::Med,
         "systemd" | "systemd-link" | "cron" | "autostart" | "udev" | "preload" | "ssh" | "tmpexec" | "kernel" => Severity::Med,
         _ => Severity::Low,
     }
@@ -92,6 +93,9 @@ fn check_of(key: &str) -> &'static str {
         "tmpexec" => "tmpexec",
         "ebpf" | "kernel" => "kernel",
         "aur" => "aur",
+        "network" => "network",
+        "integrity" => "integrity",
+        "rootkit" => "rootkit",
         "ioc" => "ioc",
         _ => "baseline",
     }

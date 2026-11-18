@@ -44,6 +44,8 @@ pub struct Ctx {
     pub homes: Vec<Home>,
     pub pkg: Backend,
     pub distro: String,
+    /// `--deep`: verify every package file, not just security-critical ones.
+    pub deep: bool,
     notes: RefCell<BTreeSet<String>>,
     inventory: RefCell<BTreeMap<String, String>>,
     /// Inventory keys whose changes alone are expected (package-owned files).
@@ -68,6 +70,7 @@ impl Ctx {
             homes: Vec::new(),
             pkg,
             distro,
+            deep: false,
             notes: RefCell::new(BTreeSet::new()),
             inventory: RefCell::new(BTreeMap::new()),
             quiet: RefCell::new(BTreeSet::new()),

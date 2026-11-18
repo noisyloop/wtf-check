@@ -76,6 +76,68 @@ pub fn strip_version(dir: &str) -> &str {
     it.next().unwrap_or(dir)
 }
 
+/// Decode mtree/vis octal escapes such as `\\040` (space).
+fn unvis(s: &str) -> String {
+    let b = s.as_bytes();
+    let mut out = Vec::with_capacity(b.len());
+    let mut i = 0;
+    while i < b.len() {
+        if b[i] == b'\\' && i + 3 < b.len() && b[i + 1..i + 4].iter().all(|c| (b'0'..=b'7').contains(c)) {
+            out.push(((b[i + 1] - b'0') << 6) | ((b[i + 2] - b'0') << 3) | (b[i + 3] - b'0'));
+            i += 4;
+        } else {
+            out.push(b[i]);
+            i += 1;
+        }
+    }
+    String::from_utf8_lossy(&out).into_owned()
+}
+
+/// Parse a (decompressed) pacman `.MTREE`: regular files with size + sha256.
+pub fn parse_mtree(text: &str) -> Vec<(String, Option<u64>, String)> {
+    let mut defaults: HashMap<String, String> = HashMap::new();
+    let mut out = Vec::new();
+    for line in text.lines() {
+        let line = line.trim();
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        let mut toks = line.split_whitespace();
+        let first = toks.next().unwrap_or("");
+        if first == "/set" {
+            for kv in toks {
+                if let Some((k, v)) = kv.split_once('=') {
+                    defaults.insert(k.into(), v.into());
+                }
+            }
+            continue;
+        }
+        if first == "/unset" {
+            for k in toks {
+                defaults.remove(k);
+            }
+            continue;
+        }
+        let mut kv = defaults.clone();
+        for t in toks {
+            if let Some((k, v)) = t.split_once('=') {
+                kv.insert(k.into(), v.into());
+            }
+        }
+        let path = unvis(first.trim_start_matches('.'));
+        if !path.starts_with('/') || (path.starts_with("/.") && !path[2..].contains('/')) {
+            continue; // ./.PKGINFO, ./.BUILDINFO, ./.MTREE, ./.INSTALL
+        }
+        if kv.get("type").map(String::as_str) != Some("file") {
+            continue;
+        }
+        if let Some(d) = kv.get("sha256digest") {
+            out.push((path, kv.get("size").and_then(|s| s.parse().ok()), d.clone()));
+        }
+    }
+    out
+}
+
 impl Pacman {
     pub fn detect(fs: &Fs) -> Option<Pacman> {
         let has_any = fs.list_dir(Path::new(LOCAL_DB)).map(|v| !v.is_empty()).unwrap_or(false);
@@ -100,6 +162,34 @@ impl Pacman {
             m
         });
         map.get(path).cloned()
+    }
+
+    /// Checksum records from every package's mtree, minus %BACKUP% (config) files.
+    pub fn records(&self) -> Vec<super::FileRecord> {
+        let mut out = Vec::new();
+        for dir in self.entries() {
+            let name = dir.file_name().map(|n| strip_version(&n.to_string_lossy()).to_string()).unwrap_or_default();
+            let backup: HashSet<String> = self
+                .fs
+                .read_text(&dir.join("files"))
+                .map(|t| sections(&t).remove("BACKUP").unwrap_or_default().iter().filter_map(|l| l.split('\t').next()).map(|p| format!("/{p}")).collect())
+                .unwrap_or_default();
+            let Ok(raw) = self.fs.read_capped(&dir.join("mtree"), 64 * 1024 * 1024) else { continue };
+            let text = if inflate::is_gzip(&raw) {
+                match inflate::gunzip(&raw, 256 * 1024 * 1024) {
+                    Ok(t) => t,
+                    Err(_) => continue,
+                }
+            } else {
+                raw
+            };
+            for (path, size, digest) in parse_mtree(&String::from_utf8_lossy(&text)) {
+                if !backup.contains(&path) {
+                    out.push(super::FileRecord { path, pkg: name.clone(), size, digest, md5: false });
+                }
+            }
+        }
+        out
     }
 
     pub fn packages(&self) -> &[LocalPkg] {
@@ -165,6 +255,35 @@ mod tests {
         assert_eq!(f, vec!["/usr/bin/yay"]);
         assert_eq!(strip_version("lib32-glibc-2.40+r16-1"), "lib32-glibc");
         assert_eq!(strip_version("foo-1:2.0-3"), "foo");
+    }
+
+    /// Wrap bytes in a gzip stream using one stored (uncompressed) block.
+    pub fn gzip_stored(data: &[u8]) -> Vec<u8> {
+        let mut g = vec![0x1f, 0x8b, 8, 0, 0, 0, 0, 0, 0, 255];
+        g.push(1);
+        let len = data.len() as u16;
+        g.extend(len.to_le_bytes());
+        g.extend((!len).to_le_bytes());
+        g.extend(data);
+        g.extend([0u8; 8]);
+        g
+    }
+
+    #[test]
+    fn mtree_parsing() {
+        let t = "#mtree\n/set type=file uid=0 gid=0 mode=644\n./.PKGINFO time=1 size=10 sha256digest=aa\n./usr time=1 mode=755 type=dir\n./usr/bin/bash time=1 mode=755 size=5 sha256digest=bb\n./usr/bin/sh time=1 type=link link=bash\n./usr/share/my\\040file size=1 sha256digest=cc\n";
+        let m = parse_mtree(t);
+        assert_eq!(m, vec![("/usr/bin/bash".into(), Some(5), "bb".into()), ("/usr/share/my file".into(), Some(1), "cc".into())]);
+        let r = FakeRoot::new("mtree");
+        r.write("/var/lib/pacman/local/bash-5.2-1/desc", "%NAME%\nbash\n");
+        r.write("/var/lib/pacman/local/bash-5.2-1/files", "%FILES%\netc/bash.bashrc\nusr/bin/bash\n\n%BACKUP%\netc/bash.bashrc\tabc\n");
+        let mt = "/set type=file\n./etc/bash.bashrc size=1 sha256digest=dd\n./usr/bin/bash size=5 sha256digest=bb\n";
+        std::fs::write(r.0.join("var/lib/pacman/local/bash-5.2-1/mtree"), gzip_stored(mt.as_bytes())).unwrap();
+        let pm = Pacman::detect(&Fs::new(r.0.clone())).unwrap();
+        let recs = pm.records();
+        assert_eq!(recs.len(), 1, "backup files are skipped");
+        assert_eq!(recs[0].path, "/usr/bin/bash");
+        assert_eq!(recs[0].pkg, "bash");
     }
 
     #[test]

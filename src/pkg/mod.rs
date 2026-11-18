@@ -13,6 +13,17 @@ pub enum Backend {
     None,
 }
 
+/// A package manager's record of what a file should contain.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FileRecord {
+    pub path: String,
+    pub pkg: String,
+    pub size: Option<u64>,
+    pub digest: String,
+    /// true = MD5 (dpkg), false = SHA-256 (pacman mtree).
+    pub md5: bool,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Ownership {
     Owned(String),
@@ -81,6 +92,26 @@ impl Backend {
             }
         }
         Ownership::Unowned
+    }
+
+    /// File checksum records, if the backend keeps them. None = unsupported.
+    pub fn records(&self) -> Option<Vec<FileRecord>> {
+        match self {
+            Backend::Pacman(b) => Some(b.records()),
+            Backend::Dpkg(b) => Some(b.records()),
+            _ => None,
+        }
+    }
+
+    /// Command to reinstall a package from the repositories.
+    pub fn reinstall_cmd(&self, pkg: &str) -> String {
+        let q = crate::util::shell_quote(pkg);
+        match self {
+            Backend::Pacman(_) => format!("sudo pacman -S {q}"),
+            Backend::Dpkg(_) => format!("sudo apt install --reinstall {q}"),
+            Backend::Rpm(_) => format!("sudo dnf reinstall {q}"),
+            Backend::None => String::new(),
+        }
     }
 
     /// A command the user can run to verify a package's files.

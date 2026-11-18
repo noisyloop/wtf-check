@@ -1,6 +1,7 @@
 pub mod base64;
 pub mod fs;
 pub mod inflate;
+pub mod md5;
 pub mod proc;
 pub mod sha256;
 pub mod time;

@@ -4,10 +4,13 @@
 pub mod aur;
 pub mod autostart;
 pub mod cron;
+pub mod integrity;
 pub mod ioc;
 pub mod kernel;
+pub mod network;
 pub mod preload;
 pub mod process;
+pub mod rootkit;
 pub mod shell;
 pub mod ssh;
 pub mod systemd;
@@ -38,7 +41,10 @@ pub const CHECKS: &[Check] = &[
     Check { name: "ssh", about: "authorized_keys, key options, ~/.ssh permissions", run: ssh::run },
     Check { name: "tmpexec", about: "executables / ELF files in /tmp, /var/tmp, /dev/shm", run: tmpexec::run },
     Check { name: "process", about: "running processes (deleted/temp/memfd exe, disguised names)", run: process::run },
+    Check { name: "network", about: "listening, raw and packet sockets mapped to processes (from /proc/net)", run: network::run },
     Check { name: "kernel", about: "kernel taint flags, unknown modules, eBPF programs (bpftool)", run: kernel::run },
+    Check { name: "integrity", about: "package binaries, libraries and PAM modules vs. package checksums (--deep: all files)", run: integrity::run },
+    Check { name: "rootkit", about: "known rootkit/malware IOCs, hidden processes and hidden kernel modules", run: rootkit::run },
     Check { name: "aur", about: "Arch: foreign/AUR packages and install dates", run: aur::run },
     Check { name: "ioc", about: "known IOC sweep (atomic-lockfile dirs)", run: ioc::run },
 ];
