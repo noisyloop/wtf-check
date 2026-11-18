@@ -1,100 +1,111 @@
-# Scanning from a live USB: a step-by-step guide
+# Scanning Arch Linux from a live USB: a step-by-step guide
 
-This guide is for people who have never booted a computer from a USB stick.
-It takes about 30–45 minutes the first time.
+This guide is for people who have never booted their Arch machine from a USB
+stick. It uses the official **Arch Linux ISO** and **one USB stick**, and takes
+about 30–45 minutes the first time.
+
+The Arch ISO boots to a text console where you're already **root**, so the
+commands below have no `sudo`. Every command is typed or pasted at that prompt.
 
 ## Why bother?
 
 When you run wtf-check on your normal, running system, you are asking that
 system to report on itself. If it has been seriously compromised (a *rootkit*
-in the kernel, or a library injected into every program via
-`/etc/ld.so.preload`), the malware can hide its files and processes from
-**any** program running on it, wtf-check included.
+in the kernel, a library injected into every program via `/etc/ld.so.preload`,
+or a malicious AUR package that did either), the malware can hide its files
+and processes from **any** program running on it, wtf-check included.
 
-Booting from a USB stick means your installed system is **not running at all**.
+Booting the Arch ISO means your installed system is **not running at all**.
 Its disk is just data, and nothing on it gets a chance to lie. wtf-check reads
 it from the outside with `--root`.
 
 ## What you need
 
-- **One USB stick**, 8 GB or larger. **It will be erased**, so copy off anything
-  you want to keep. It holds the live system, wtf-check and your report.
+- **One USB stick**, 8 GB or larger. **It will be erased**, so copy off
+  anything you want to keep. It holds the Arch ISO, wtf-check and your report.
 - **A second, trusted computer** to prepare the stick. If you suspect your
   computer is compromised, don't prepare it there.
-- About 30 minutes during which the suspect computer is switched off from its
-  normal system.
+- Your **disk encryption password**, if your install uses LUKS.
 
 > **Safety first:** this guide only **reads** your disk. Every mount command
-> below is read-only. Don't skip the `ro` options, and don't click your internal
-> disk in the live system's file manager: that mounts it read-write.
+> below is read-only. Don't remove the `ro` options.
 
 ---
 
-## Step 1: Make the USB stick bootable with Ventoy
+## Step 1: Make the stick bootable with Ventoy
 
 [Ventoy](https://www.ventoy.net) turns a stick into a boot menu for ISO files
-while the rest of it stays normal storage. That's what lets one stick hold the
-live system, wtf-check and your report.
+while the rest of it stays normal storage, so one stick can hold the Arch ISO,
+wtf-check and your report.
 
-1. On the trusted computer, download Ventoy from
-   <https://www.ventoy.net/en/download.html> (or its GitHub releases page).
+1. On the trusted computer, download Ventoy from its official release page,
+   <https://github.com/ventoy/Ventoy/releases> (or <https://www.ventoy.net>),
+   and check the file against the `sha256` listed there. Use the official
+   download rather than an AUR package for this.
 2. Install it to the stick. This **erases** the stick.
-   - **Windows:** unzip, run `Ventoy2Disk.exe`, pick the stick under *Device*,
-     click *Install*.
-   - **Linux:** unpack, then run `VentoyGUI.x86_64`, or in a terminal:
+   - **Linux:** unpack the `linux.tar.gz`, `cd` into it, then:
      ```sh
-     lsblk                          # find the stick, e.g. /dev/sdb (whole disk, not sdb1)
+     lsblk                              # find the stick, e.g. /dev/sdb (whole disk, not sdb1)
      sudo sh Ventoy2Disk.sh -i /dev/sdX
      ```
      Double-check `sdX`. Installing to the wrong disk erases it.
+   - **Windows:** unzip, run `Ventoy2Disk.exe`, pick the stick, click *Install*.
+3. Afterwards the stick appears as a normal drive labelled **Ventoy**. Create a
+   folder named `ventoy` on it, and inside that a file named `ventoy.json`
+   containing exactly:
+   ```json
+   { "control": [ { "VTOY_LINUX_REMOUNT": "1" } ] }
+   ```
+   **Don't skip this.** While the live system runs, Linux keeps Ventoy's
+   partition busy. This setting lets you mount it in step 4 to reach
+   wtf-check and save your report.
 
-Afterwards the stick shows up as a normal drive called **Ventoy**.
+## Step 2: Copy the Arch ISO and wtf-check onto the stick
 
-> **Can't use Ventoy?** Write the Ubuntu ISO with [Rufus](https://rufus.ie),
-> [balenaEtcher](https://etcher.balena.io) or GNOME Disks (*Restore Disk
-> Image…*) instead. Those take over the whole stick, so you'll need a second
-> stick for wtf-check and the report. Wherever this guide says
-> `/media/ubuntu/Ventoy`, use the second stick's folder.
+**Arch ISO.**
 
-## Step 2: Copy Ubuntu and wtf-check onto the stick
+1. Download the latest ISO and its `.sig` file from
+   <https://archlinux.org/download/> (pick a mirror near you).
+2. Verify it.
+   - On an Arch machine:
+     ```sh
+     pacman-key -v archlinux-*-x86_64.iso.sig
+     ```
+     It must report a good signature from an Arch Linux developer.
+   - Anywhere else: compare `sha256sum archlinux-*-x86_64.iso` against the
+     SHA256 shown on the download page.
+3. Copy the `.iso` onto the Ventoy drive like any other file. Don't unpack it.
 
-**Ubuntu.** Use Ubuntu Desktop if you're unsure. It has a normal desktop and
-recognises most hardware. (The Arch Linux ISO also works, but it's text-only.)
+**wtf-check.** Use the **static (musl) build**. It runs on the live ISO no
+matter which glibc it ships, and it ignores `LD_PRELOAD`/`ld.so.preload`.
 
-1. Download the ISO from the official site only:
-   <https://ubuntu.com/download/desktop>
-2. Verify it. The site publishes a `SHA256SUMS` file. Compare:
-   - Linux: `sha256sum ubuntu-*.iso` (macOS: `shasum -a 256 ubuntu-*.iso`)
-   - Windows (PowerShell): `Get-FileHash .\ubuntu-*.iso`
-3. Copy the `.iso` file onto the Ventoy drive like any other file. Don't unpack it.
-
-**wtf-check.** Use the **static (musl) build**. It runs on any Linux, including
-a live system with a different libc version, and it ignores
-`LD_PRELOAD`/`ld.so.preload` entirely. With Rust installed from
-<https://rustup.rs>:
+On an Arch machine, the musl target comes from the official repos:
 
 ```sh
+sudo pacman -S --needed git rust rust-musl
 git clone https://github.com/noisyloop/wtf-check.git && cd wtf-check
-rustup target add x86_64-unknown-linux-musl
 cargo build --release --target x86_64-unknown-linux-musl
 sha256sum target/x86_64-unknown-linux-musl/release/wtf-check
 ```
 
-(For ARM machines, use `aarch64-unknown-linux-musl` instead.)
+(With rustup instead: `rustup target add x86_64-unknown-linux-musl`, then the
+same `cargo build`. For ARM, use `aarch64-unknown-linux-musl`.)
 
 Copy `target/x86_64-unknown-linux-musl/release/wtf-check` onto the Ventoy
-drive, next to the ISO, and write down the `sha256sum` output.
+drive, next to the ISO, and **write down the `sha256sum` output**.
 
 Optional: if you saved a baseline earlier on the healthy system
 (`sudo wtf-check --save-baseline wtf.baseline`), copy that onto the stick too.
 
-## Step 3: Boot the suspect computer from the stick
+## Step 3: Boot your Arch machine from the stick
 
-1. Shut the suspect computer down completely (not sleep or hibernate).
-   **Windows dual-boot users:** hold Shift while clicking *Shut down*, or disable
-   *Fast Startup*, so the Windows partition isn't left in a half-mounted state.
-2. Plug in the stick.
-3. Power on and immediately tap the **boot menu key**. Common ones:
+1. Shut down completely, not suspend or hibernate. Dual-boot with Windows?
+   Turn off Windows *Fast Startup* first.
+2. **Turn off Secure Boot** in the firmware setup (usually F2 or Del at
+   power-on). The official Arch ISO doesn't support Secure Boot. If you use
+   your own Secure Boot keys (sbctl), note your settings so you can restore
+   them afterwards.
+3. Plug in the stick, power on, and tap the **boot menu key**:
 
    | Maker | Boot menu key |
    | --- | --- |
@@ -102,43 +113,39 @@ Optional: if you saved a baseline earlier on the healthy system
    | HP | F9 (or Esc, then F9) |
    | Lenovo | F12 (ThinkPad: Enter, then F12; some IdeaPads: the small *Novo* button) |
    | ASUS | F8 or Esc |
-   | Acer | F12 (may need enabling in BIOS with F2) |
+   | Acer | F12 (may need enabling in setup with F2) |
    | MSI | F11 |
    | Gigabyte | F12 |
    | Framework | F12 |
-   | Apple Intel Mac | hold Option ⌥ |
 
-4. Pick the USB entry (often labelled *UEFI: <stick name>*).
-5. The Ventoy menu lists your ISO. Select it, then **Boot in normal mode**.
-6. Choose **Try or Install Ubuntu**, then on the welcome screen **Try Ubuntu**.
-   **Don't** install.
+4. Pick the USB entry (often *UEFI: <stick name>*).
+5. In the Ventoy menu, select the Arch ISO, then **Boot in normal mode**.
+6. In the Arch menu, choose **Arch Linux install medium (x86_64, UEFI)**.
+7. You land at a `root@archiso ~ #` prompt. You won't install anything, and
+   you don't need a network connection.
 
-**Secure Boot screen?** The first time, a computer with Secure Boot on may
-show a blue *Verification failed* screen. Press Enter, choose *Enroll key from
-disk*, then `VTOYEFI` → `ENROLL_THIS_KEY_IN_MOKMANAGER.cer`, confirm, and
-reboot. If that's too fiddly, turn Secure Boot off in firmware setup and back
-on afterwards.
+Not a US keyboard? Set yours first, e.g. `loadkeys de-latin1` (list them with
+`localectl list-keymaps`). Tiny text on a HiDPI screen? Run `setfont ter-132b`.
 
-If it won't boot at all: enter the firmware setup (usually F2 or Del at
-power-on) and check that USB boot is enabled.
-
-## Step 4: Open a terminal and find wtf-check
-
-- Press **Ctrl+Alt+T** (or open *Terminal* from the app grid).
-- The stick's storage is at `/media/ubuntu/Ventoy`. If it isn't there, click
-  **Ventoy** once in the Files app to mount it. (That's your stick, which is
-  fine to click. Your internal disk isn't.)
-
-Copy wtf-check off the stick, since programs can't run straight from it, and verify it:
+## Step 4: Mount the stick and get wtf-check
 
 ```sh
-ls /media/ubuntu/Ventoy/
-cp /media/ubuntu/Ventoy/wtf-check /tmp/wtf-check
+mkdir -p /run/usb
+mount /dev/disk/by-label/Ventoy /run/usb
+ls /run/usb                          # you should see the ISO and wtf-check
+cp /run/usb/wtf-check /tmp/wtf-check
 chmod +x /tmp/wtf-check
-sha256sum /tmp/wtf-check      # must match what you wrote down in step 2
+sha256sum /tmp/wtf-check             # must match what you wrote down in step 2
 ```
 
-## Step 5: Find your installed system's disk
+wtf-check is copied to `/tmp` because programs can't run straight from the
+stick's exFAT partition.
+
+If `mount` says **"Device or resource busy"**, the `ventoy.json` from step 1 is
+missing or misspelled. Reboot into the trusted computer, fix it, and try again.
+Or put wtf-check on a second stick or SD card and mount that instead.
+
+## Step 5: Find your Arch install's disk
 
 ```sh
 lsblk -f
@@ -147,139 +154,168 @@ lsblk -f
 You'll see something like:
 
 ```
-NAME        FSTYPE      LABEL   SIZE MOUNTPOINTS
-sda                              16G                ← your USB stick
-├─sda1      exfat       Ventoy   16G /media/ubuntu/Ventoy   ← wtf-check and the ISO
-└─sda2      vfat        VTOYEFI  32M                ← Ventoy's boot files (skip)
-nvme0n1                         512G                 ← your internal disk
-├─nvme0n1p1 vfat                  1G                 ← EFI partition (skip)
-├─nvme0n1p2 ext4                500G                 ← your Linux system  ✔
-└─nvme0n1p3 swap                  8G                 ← swap (skip)
+NAME        FSTYPE      LABEL    SIZE MOUNTPOINTS
+loop0       squashfs             800M /run/archiso/airootfs   ← the live system (skip)
+sda                               16G                         ← your USB stick
+├─sda1      exfat       Ventoy    16G /run/usb
+└─sda2      vfat        VTOYEFI   32M                         ← Ventoy's boot files (skip)
+nvme0n1                          512G                         ← your internal disk
+├─nvme0n1p1 vfat                   1G                         ← EFI / /boot partition (skip)
+└─nvme0n1p2 btrfs                511G                         ← your Arch system  ✔
 ```
 
-Look for the big partition on the internal disk (`nvme0n1…` or `sda…`)
-with type **ext4**, **btrfs**, **xfs**, **crypto_LUKS** or **LVM2_member**. In
-the commands below, replace `/dev/nvme0n1p2` with yours.
+Look for the big partition on the internal disk (`nvme0n1…` or `sda…` when the
+stick is `sdb`) with type **btrfs**, **ext4**, **xfs** or **crypto_LUKS**
+(possibly with **LVM2_member** inside). In the commands below, replace
+`/dev/nvme0n1p2` with yours.
 
 (Optional, strongest protection: mark the whole internal disk read-only at the
-block level before mounting: `sudo blockdev --setro /dev/nvme0n1`.)
+block level first: `blockdev --setro /dev/nvme0n1`.)
 
 ## Step 6: Mount it read-only
 
-Pick the case that matches the **FSTYPE** you saw.
+Work through the cases in order.
 
-**A. Encrypted (`crypto_LUKS`):** unlock first, read-only:
-
-```sh
-sudo cryptsetup open --readonly /dev/nvme0n1p2 suspect
-# enter your disk password; the unlocked device is /dev/mapper/suspect
-lsblk -f /dev/mapper/suspect     # see what's inside, then continue with B–E below,
-                                 # using /dev/mapper/suspect as the device
-```
-
-**B. LVM (`LVM2_member`, common on Fedora or encrypted Ubuntu):**
+**A. Encrypted (`crypto_LUKS`):** archinstall's "encrypt disk" option, or a
+manual dm-crypt setup. Unlock it read-only:
 
 ```sh
-sudo vgchange -ay
-lsblk -f                         # pick the root volume, e.g. /dev/mapper/vgubuntu-root
+cryptsetup open --readonly /dev/nvme0n1p2 suspect
+lsblk -f /dev/mapper/suspect
 ```
 
-**C. ext4** (most Ubuntu/Debian/Mint/Arch installs):
+From here on the device is `/dev/mapper/suspect`. If it shows **LVM2_member**,
+continue with B. Otherwise skip to C, D or E.
+
+**B. LVM on LUKS** (the classic manual Arch setup from the wiki):
 
 ```sh
-sudo mkdir -p /mnt
-sudo mount -o ro,noload /dev/nvme0n1p2 /mnt
+vgchange -ay
+lsblk -f                             # find the root volume, e.g. /dev/mapper/vg0-root
 ```
 
-(`noload` stops the kernel from replaying the journal, so nothing at all is written.)
+Use that volume as the device in C, D or E. A separate `home` volume gets
+mounted at `/mnt/home` the same way.
 
-**D. btrfs** (Fedora, openSUSE, many Arch installs). The system usually lives in
-a *subvolume*:
+**C. btrfs** (archinstall's default). The system lives in subvolumes:
 
 ```sh
-sudo mount -o ro /dev/nvme0n1p2 /mnt
-ls /mnt                          # if you see @ and @home (or root and home):
-sudo umount /mnt
-sudo mount -o ro,rescue=nologreplay,subvol=@ /dev/nvme0n1p2 /mnt
-sudo mount -o ro,rescue=nologreplay,subvol=@home /dev/nvme0n1p2 /mnt/home
+mount -o ro /dev/nvme0n1p2 /mnt
+ls /mnt                              # archinstall layout: @  @home  @log  @pkg  @.snapshots
+umount /mnt
+mount -o ro,rescue=nologreplay,subvol=@     /dev/nvme0n1p2 /mnt
+mount -o ro,rescue=nologreplay,subvol=@home /dev/nvme0n1p2 /mnt/home
+mount -o ro,rescue=nologreplay,subvol=@log  /dev/nvme0n1p2 /mnt/var/log   # optional
 ```
 
-(Fedora names them `root` and `home` instead of `@` and `@home`.)
+If `ls /mnt` showed normal folders (`etc`, `usr`, `home`…) instead of `@` names,
+the system isn't in a subvolume and the first `mount` was all you needed. Don't
+`umount`.
+
+**D. ext4:**
+
+```sh
+mount -o ro,noload /dev/nvme0n1p2 /mnt
+```
+
+(`noload` stops the kernel from replaying the journal, so nothing is written.)
 
 **E. XFS:**
 
 ```sh
-sudo mount -o ro,norecovery /dev/nvme0n1p2 /mnt
+mount -o ro,norecovery /dev/nvme0n1p2 /mnt
 ```
 
-**Separate /home partition?** If `lsblk -f` showed a second large Linux
-partition, mount it too, the same way, at `/mnt/home`:
+**Separate /home partition?** If `lsblk -f` showed another large Linux
+partition, mount it read-only at `/mnt/home` using the matching command.
+
+**Sanity check:**
 
 ```sh
-sudo mount -o ro,noload /dev/nvme0n1p4 /mnt/home    # ext4 example
-```
-
-Sanity check. You should see your system's folders and users:
-
-```sh
-ls /mnt            # bin  boot  etc  home  usr  var …
-ls /mnt/home       # your username(s)
+ls /mnt                              # bin boot etc home usr var …
+ls /mnt/home                         # your username(s)
+ls /mnt/var/lib/pacman/local | head  # your installed packages
 ```
 
 ## Step 7: Run the scan
 
-Save the report onto **the USB stick**, never onto the disk you're inspecting:
+Save the report onto the stick, never onto the disk you're inspecting:
 
 ```sh
-REPORT=/media/ubuntu/Ventoy
-sudo /tmp/wtf-check --root /mnt --no-color | tee "$REPORT/wtf-report.txt"
-sudo /tmp/wtf-check --root /mnt --json > "$REPORT/wtf-report.json"
+/tmp/wtf-check --root /mnt --no-color | tee /run/usb/wtf-report.txt
+/tmp/wtf-check --root /mnt --json > /run/usb/wtf-report.json
 ```
 
 If you brought a baseline from step 2:
 
 ```sh
-sudo /tmp/wtf-check --root /mnt --baseline /media/ubuntu/Ventoy/wtf.baseline
+/tmp/wtf-check --root /mnt --baseline /run/usb/wtf.baseline
 ```
 
-Notes you'll always see in offline mode, which are expected and fine:
-*"process check skipped: no procfs"* and *"kernel taint not checked"*. There are
-no running processes on a powered-off system. Run wtf-check normally on the
+The console only scrolls so far, so page through the saved report with
+`less -R /run/usb/wtf-report.txt`.
+
+Two notes always appear in an offline scan. They're expected, because a
+powered-off system has no running processes: *"process check skipped: no
+procfs"* and *"kernel taint not checked"*. Run wtf-check normally on the
 booted system as well to cover those.
+
+### Arch extra: check package integrity while you're here
+
+pacman can verify every installed file against its package records, read-only,
+from the live ISO:
+
+```sh
+pacman --sysroot /mnt -Qkk 2>&1 | grep -v ' 0 altered files' | tee /run/usb/pacman-Qkk.txt
+pacman --sysroot /mnt -Qm | tee /run/usb/foreign-packages.txt
+```
+
+The first lists files that differ from what their package installed. Edited
+configs in `/etc` (your `pacman.conf`, `fstab`…) are normal. Changed binaries
+in `/usr/bin` or `/usr/lib` are not. The second lists foreign (AUR or locally
+built) packages, which you can cross-check with wtf-check's `aur` findings.
 
 ## Step 8: Read the results
 
-- The report is grouped **HIGH → MED → LOW → INFO**.
-- **HIGH:** look at these first. Each one has a *why* and a suggested *fix*.
-- **LOW / INFO:** mostly an inventory (your SSH keys, your cron jobs, your AUR
-  packages). Ask yourself whether you recognise each one.
-- Paths in the report include `/mnt`, e.g. `/mnt/etc/systemd/system/x.service`
-  is `/etc/systemd/system/x.service` on your real system.
-- See the *False positives* section of the [README](../README.md) before
-  panicking. Many LOW findings are normal.
+- The report is grouped **HIGH → MED → LOW → INFO**. HIGH first. Each finding
+  has a *why* and a suggested *fix*.
+- **LOW / INFO** is mostly an inventory: your SSH keys, cron jobs, user units
+  and AUR packages. Confirm you recognise each one.
+- **`aur` MED findings** mean a foreign package was installed or updated
+  between 2026-06-09 and 2026-08-15, the window of the AUR malware waves. That
+  doesn't prove it's malicious. Open the package's PKGBUILD history on
+  `https://aur.archlinux.org/cgit/aur.git/log/?h=<package>` (from another
+  device) and look at what changed in that period.
+- Paths in the report include `/mnt`: `/mnt/etc/systemd/system/x.service` is
+  `/etc/systemd/system/x.service` on your real system.
+- Read the *False positives* section of the [README](../README.md) before
+  worrying. Many LOW findings are normal.
 
 **Don't fix things from the live USB yet.** Your disk is mounted read-only on
 purpose. If you find something real:
 
-1. Keep the report and, ideally, a copy of the suspicious files (copy them to
-   the stick: `sudo cp /mnt/path/to/file /media/ubuntu/Ventoy/`).
-2. Decide whether to clean up or reinstall. For anything HIGH that you didn't
-   put there yourself (e.g. a non-empty `ld.so.preload`, a process disguised as
-   a kernel thread, an unknown root SSH key), **reinstalling** is the safe
-   choice. Also **change passwords and rotate SSH keys/tokens from a different,
-   trusted device**.
-3. If you do clean up, boot your normal system (or remount read-write) and run
-   the suggested fix commands one by one after reading them.
+1. Keep the reports, and copy suspicious files to the stick as evidence:
+   `cp /mnt/path/to/file /run/usb/`
+2. For a HIGH you didn't put there yourself (a non-empty `ld.so.preload`, a
+   unit running from `/tmp`, an unknown root SSH key, a suspicious AUR
+   package), **reinstalling is the safe choice**. From a different, trusted
+   device, change your passwords and replace SSH keys and API tokens.
+3. If you clean up instead, boot your normal system and run the suggested fix
+   commands one at a time, after reading each one. Then reinstall any package
+   `pacman -Qkk` reported as altered: `sudo pacman -S <package>`.
 
 ## Step 9: Clean up and reboot
 
 ```sh
-sudo umount -R /mnt
-sudo cryptsetup close suspect      # only if you unlocked LUKS in step 6A
+umount -R /mnt
+cryptsetup close suspect             # only if you unlocked LUKS in step 6A
+umount /run/usb
+reboot
 ```
 
-Then reboot and remove the stick. Your computer starts normally, and your report
-is on the stick, ready to read on any computer.
+Remove the stick when the screen goes dark, and turn Secure Boot back on in the
+firmware setup if you turned it off. Your report is on the stick, ready to read
+on any computer.
 
 ---
 
@@ -287,12 +323,20 @@ is on the stick, ready to read on any computer.
 
 | Problem | Fix |
 | --- | --- |
-| Ventoy menu doesn't list the ISO | The copy didn't finish, or the file is in a subfolder. Copy it again to the top level of the Ventoy drive and eject the stick properly. |
+| Ventoy menu doesn't list the ISO | The copy didn't finish, or the ISO is in a subfolder. Copy it again to the top level of the Ventoy drive and eject properly. |
+| Black screen or "verification failed" when booting Arch | Secure Boot is still on. Turn it off (step 3). |
+| `mount: /run/usb: … Device or resource busy` | `ventoy/ventoy.json` is missing or has a typo (step 1). |
 | `GLIBC_2.xx not found` | You copied the normal build. Use the static musl build from step 2. |
-| `Permission denied` running wtf-check | Run it from `/tmp` after `chmod +x` (USB sticks are often `noexec`), and use `sudo`. |
-| `wrong fs type, bad option, bad superblock` | Wrong FSTYPE case in step 6, or the partition is still locked (LUKS) or inside LVM. Re-check `lsblk -f`. |
-| btrfs: `unrecognized mount option "rescue=nologreplay"` | Older live kernel: use `-o ro,nologreplay,subvol=@` instead. |
-| `/mnt` is empty or has only `@` folders | btrfs subvolumes, see step 6D. |
-| ntfs / "The disk contains an unclean file system" | That's a Windows partition. wtf-check audits Linux; skip it. |
-| The report shows no homes | `/home` is on a separate partition you haven't mounted. See *Separate /home* in step 6. |
-| Nothing found | Good news, but not proof: wtf-check covers common persistence spots, not every possible compromise. |
+| `Permission denied` running wtf-check | Run it from `/tmp` after `chmod +x`, not from the stick. |
+| `wrong fs type, bad option, bad superblock` | Wrong case in step 6, or the partition is still locked (LUKS) or inside LVM. Re-check `lsblk -f`. |
+| `/mnt` only shows `@` folders | btrfs subvolumes. See step 6C. |
+| The report lists no homes | `/home` is on a separate partition or the `@home` subvolume, and isn't mounted yet. See step 6. |
+| Keys type the wrong letters | Set your keyboard layout with `loadkeys` (step 3). |
+| Nothing found | Good news, but not proof: wtf-check covers the common persistence spots, not every possible compromise. |
+
+## Not on Arch?
+
+The same steps work with any distro's live ISO, such as Ubuntu or Fedora
+desktop images. Their desktops log you in as a normal user, so put `sudo` in
+front of the mount, `cryptsetup` and wtf-check commands. Those ISOs usually
+support Secure Boot, so you can leave it on.
