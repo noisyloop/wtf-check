@@ -68,7 +68,7 @@ entirely.
 On the trusted computer (with Rust installed from <https://rustup.rs>):
 
 ```sh
-git clone <this repository> wtf-check && cd wtf-check
+git clone https://github.com/noisyloop/wtf-check.git && cd wtf-check
 rustup target add x86_64-unknown-linux-musl
 cargo build --release --target x86_64-unknown-linux-musl
 sha256sum target/x86_64-unknown-linux-musl/release/wtf-check
