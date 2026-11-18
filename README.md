@@ -32,6 +32,15 @@ cargo build --release
 sudo install -m 0755 target/release/wtf-check /usr/local/bin/
 ```
 
+For a fully static binary (runs on any Linux, ideal for live USBs, and
+unaffected by `LD_PRELOAD`/`ld.so.preload` on the host):
+
+```sh
+rustup target add x86_64-unknown-linux-musl
+cargo build --release --target x86_64-unknown-linux-musl
+# → target/x86_64-unknown-linux-musl/release/wtf-check
+```
+
 Tests and lints:
 
 ```sh
@@ -54,7 +63,7 @@ wtf-check list-checks
 sudo wtf-check --save-baseline /root/wtf.baseline
 sudo wtf-check --baseline /root/wtf.baseline     # report only new/changed items
 
-# Offline scan of a mounted system from a live USB (recommended, see below)
+# Offline scan of a mounted system from a live USB (see docs/LIVE-USB.md)
 sudo mount /dev/nvme0n1p2 /mnt
 sudo wtf-check --root /mnt
 ```
@@ -118,8 +127,8 @@ a shell), `python -c`/`perl -e` (MED), plain `curl`/`wget` (MED), paths in
 **An in-kernel rootkit can hide from any in-host tool**, this one included. A
 malicious kernel module or eBPF program can filter what `readdir`, `/proc` and
 `read` return, so a compromised system can look clean from the inside. A
-`LD_PRELOAD` rootkit can do the same for every dynamically linked program —
-including wtf-check, which links against the system libc.
+`LD_PRELOAD` rootkit can do the same for every dynamically linked program,
+including the default wtf-check build (use the static musl build to avoid that).
 
 For real assurance, **boot a trusted live USB**, mount the disk read-only and
 scan it from outside:
@@ -128,6 +137,10 @@ scan it from outside:
 sudo mount -o ro /dev/nvme0n1p2 /mnt   # plus /mnt/home etc. if separate
 sudo wtf-check --root /mnt
 ```
+
+**New to this? Follow the step-by-step [live USB guide](docs/LIVE-USB.md)**:
+making the stick, booting it, unlocking encrypted disks, mounting ext4/btrfs/XFS
+read-only, running the scan and reading the results.
 
 Also: wtf-check finds *persistence*, not every compromise. It doesn't verify
 package file integrity (use `pacman -Qkk`, `debsums`, `rpm -Va`), inspect
