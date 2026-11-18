@@ -1,0 +1,42 @@
+#!/bin/bash
+# mkinitcpio install hook: adds wtf-check, the guided scan script and the
+# tools it needs. Used only by flipper/build-flipper-image.sh.
+
+build() {
+    add_file "$WTF_CHECK_BIN" /usr/local/bin/wtf-check 755
+    add_file "$WTF_SCAN_SCRIPT" /usr/local/bin/wtf-scan 755
+
+    # util-linux tools go to /usr/local/sbin so they don't clash with
+    # busybox applets of the same name (wtf-scan puts this dir first in PATH).
+    local b
+    for b in blkid lsblk blockdev; do
+        add_binary "$b" "/usr/local/sbin/$b"
+    done
+    # The initramfs busybox is a reduced build; bring the real tools the
+    # guided script uses so it never depends on which applets exist.
+    for b in less sed grep date ls sleep; do
+        add_binary "$b" "/usr/local/bin/$b"
+    done
+    add_file /usr/share/terminfo/l/linux /usr/share/terminfo/l/linux
+    add_binary lvm /usr/local/sbin/lvm
+    add_binary cryptsetup /usr/local/sbin/cryptsetup
+
+    # Disks, USB, filesystems, crypto, device mapper. Trailing '?' = optional.
+    add_module 'dm_mod?'
+    add_module 'dm_crypt?'
+    add_module 'dm_thin_pool?'
+    add_module 'usb_storage?'
+    add_module 'uas?'
+    add_module 'vfat?'
+    add_module 'nls_cp437?'
+    add_module 'nls_iso8859_1?'
+    add_all_modules '/crypto/'
+
+    add_runscript
+}
+
+help() {
+    cat <<HELPEOF
+Boots straight into wtf-check's guided, read-only offline scan (wtf-scan).
+HELPEOF
+}

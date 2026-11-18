@@ -1,0 +1,240 @@
+#!/bin/sh
+# wtf-scan: guided, read-only offline scan, run from the Flipper boot image.
+#
+# Runs inside the initramfs (busybox ash). It never writes to the scanned
+# disk: the chosen device is set read-only at the block layer (blockdev
+# --setro) before anything is mounted, and every mount uses ro plus the
+# filesystem's no-replay option. The only writable mount is the boot drive
+# itself (label WTFCHECK), where reports are saved.
+
+PATH=/usr/local/sbin:/usr/local/bin:/usr/bin:/usr/sbin:/bin:/sbin
+TERM=${TERM:-linux}
+[ "$TERM" = dumb ] && TERM=linux
+export PATH TERM
+LABEL=WTFCHECK
+REPORTS=/run/wtf-reports
+TARGET=/mnt
+MAPPED=""
+MOUNTED=""   # newest first, so iterating unmounts in the right order
+NCRYPT=0
+
+say() { printf '%s\n' "$*"; }
+hr() { say "------------------------------------------------------------------"; }
+ask() { printf '%s' "$1"; read -r REPLY || REPLY=""; }
+yes_no() { ask "$1 [y/N] "; case "$REPLY" in y|Y|yes|YES) return 0 ;; *) return 1 ;; esac; }
+
+fstype() { blkid -o value -s TYPE "$1" 2>/dev/null; }
+
+unmount_one() {
+    umount "$1" 2>/dev/null
+    rest=""
+    for m in $MOUNTED; do [ "$m" = "$1" ] || rest="$rest $m"; done
+    MOUNTED=$rest
+}
+
+cleanup() {
+    for m in $MOUNTED; do umount "$m" 2>/dev/null; done
+    MOUNTED=""
+    for d in $MAPPED; do cryptsetup close "$d" 2>/dev/null; done
+    MAPPED=""
+    sync
+}
+
+ro_mount() {
+    # ro_mount DEVICE MOUNTPOINT [extra-options]
+    dev=$1; mp=$2; extra=$3
+    blockdev --setro "$dev" 2>/dev/null
+    mkdir -p "$mp"
+    t=$(fstype "$dev")
+    case "$t" in
+        ext4|ext3|ext2) opts="ro,noload" ;;
+        xfs) opts="ro,norecovery" ;;
+        btrfs) opts="ro,rescue=nologreplay" ;;
+        *) opts="ro" ;;
+    esac
+    [ -n "$extra" ] && opts="$opts,$extra"
+    if mount -t "$t" -o "$opts" "$dev" "$mp" 2>/dev/null || { [ "$t" = btrfs ] && mount -t btrfs -o "ro${extra:+,$extra}" "$dev" "$mp"; }; then
+        MOUNTED="$mp $MOUNTED"
+        return 0
+    fi
+    say "  Could not mount $dev ($t) read-only."
+    return 1
+}
+
+# Disk listing from sysfs + blkid, so filesystem types show even without udev.
+# Marks this drive and suggests the most likely system partition.
+list_disks() {
+    best=""; best_size=0
+    printf '  %-14s %-12s %-14s %10s\n' NAME TYPE LABEL SIZE
+    for d in /sys/class/block/*; do
+        n=${d##*/}
+        case $n in loop*|ram*|sr*|zram*|dm-*) continue ;; esac
+        sectors=$(cat "$d/size" 2>/dev/null || echo 0)
+        mib=$((sectors / 2048))
+        t=$(fstype "/dev/$n"); l=$(blkid -o value -s LABEL "/dev/$n" 2>/dev/null)
+        note=""
+        [ "/dev/$n" = "$flip" ] && note="  <- this wtf-check drive"
+        case $t in
+            ext4|ext3|btrfs|xfs|crypto_LUKS|LVM2_member|f2fs)
+                if [ "/dev/$n" != "$flip" ] && [ "$mib" -gt "$best_size" ]; then best=$n; best_size=$mib; fi ;;
+        esac
+        printf '  %-14s %-12s %-14s %6s MiB%s\n' "$n" "${t:--}" "${l:--}" "$mib" "$note"
+    done
+    [ -n "$best" ] && say "  Most likely your system: $best"
+}
+
+# Unlock / activate until we reach a mountable filesystem. Prints the result
+# device on stdout's last line via the variable RESULT.
+open_layers() {
+    dev=$1
+    while :; do
+        t=$(fstype "$dev")
+        case "$t" in
+            crypto_LUKS)
+                NCRYPT=$((NCRYPT + 1)); name="wtfcrypt$NCRYPT"
+                say "  $dev is encrypted (LUKS). Unlocking read-only; enter its passphrase."
+                tries=0
+                until cryptsetup open --readonly "$dev" "$name"; do
+                    tries=$((tries + 1))
+                    [ "$tries" -ge 3 ] && { say "  Giving up on $dev."; return 1; }
+                done
+                MAPPED="$name $MAPPED"
+                dev=/dev/mapper/$name
+                ;;
+            LVM2_member)
+                say "  $dev holds LVM volumes. Activating them (no metadata is changed):"
+                lvm vgchange -ay >/dev/null 2>&1
+                lvm lvs --noheadings -o lv_path,lv_size 2>/dev/null | sed 's/^/    /'
+                ask "  Which volume holds your system (e.g. /dev/vg0/root)? "
+                [ -b "$REPLY" ] || { say "  $REPLY is not a block device."; return 1; }
+                dev=$REPLY
+                ;;
+            "")
+                say "  Can't tell what's on $dev."
+                return 1
+                ;;
+            *)
+                RESULT=$dev
+                return 0
+                ;;
+        esac
+    done
+}
+
+mount_system() {
+    dev=$1
+    ro_mount "$dev" "$TARGET" || return 1
+    if [ "$(fstype "$dev")" = btrfs ] && [ ! -d "$TARGET/etc" ]; then
+        root_sv=""; home_sv=""; log_sv=""
+        for c in @ root @root; do [ -d "$TARGET/$c/etc" ] && { root_sv=$c; break; }; done
+        for c in @home home; do [ -d "$TARGET/$c" ] && { home_sv=$c; break; }; done
+        [ -d "$TARGET/@log" ] && log_sv=@log
+        unmount_one "$TARGET"
+        if [ -z "$root_sv" ]; then
+            say "  btrfs without a recognisable system subvolume. Subvolumes found:"
+            ro_mount "$dev" "$TARGET" && ls "$TARGET" | sed 's/^/    /'
+            return 1
+        fi
+        say "  btrfs subvolumes: system=$root_sv${home_sv:+ home=$home_sv}"
+        ro_mount "$dev" "$TARGET" "subvol=$root_sv" || return 1
+        if [ -n "$home_sv" ] && [ -d "$TARGET/home" ]; then
+            ro_mount "$dev" "$TARGET/home" "subvol=$home_sv"
+        fi
+        if [ -n "$log_sv" ] && [ -d "$TARGET/var/log" ]; then
+            ro_mount "$dev" "$TARGET/var/log" "subvol=$log_sv"
+        fi
+    fi
+    [ -d "$TARGET/etc" ] || { say "  $dev doesn't look like a Linux system (no /etc)."; return 1; }
+    return 0
+}
+
+# ---------------------------------------------------------------------------
+
+clear 2>/dev/null
+hr
+say " wtf-check offline scan (read-only)"
+say " Your installed system is NOT running. Nothing on its disk is changed."
+hr
+
+# 1. The boot drive, for reports.
+say "Looking for the wtf-check drive ($LABEL) to save reports..."
+i=0; flip=""
+while [ $i -lt 20 ]; do
+    flip=$(blkid -L "$LABEL" 2>/dev/null)
+    [ -n "$flip" ] && break
+    sleep 1; i=$((i + 1))
+done
+mkdir -p "$REPORTS"
+if [ -n "$flip" ] && mount -t vfat -o rw,sync "$flip" "$REPORTS" 2>/dev/null; then
+    mkdir -p "$REPORTS/reports"; OUTDIR=$REPORTS/reports
+    say "  Reports will be saved to the drive ($flip) in /reports."
+else
+    OUTDIR=$REPORTS
+    say "  Drive not found or not writable: reports stay in memory and are lost at power-off."
+fi
+
+# 2. Pick the system partition.
+while :; do
+    hr
+    say "Disks and partitions:"
+    list_disks
+    hr
+    say "Pick the partition that holds your installed Linux system."
+    say "(Usually the largest one: btrfs, ext4, xfs, or crypto_LUKS if encrypted. Not the 'vfat' EFI partition.)"
+    ask "Partition name, e.g. nvme0n1p2 or sda2 (or 'shell' / 'off'): "
+    case "$REPLY" in
+        shell) say "Type 'exit' to come back."; sh -i; continue ;;
+        off|poweroff) cleanup; [ -n "$flip" ] && umount "$REPORTS" 2>/dev/null; sync; exit 0 ;;
+    esac
+    part=/dev/${REPLY#/dev/}
+    if [ ! -b "$part" ]; then say "  $part doesn't exist."; continue; fi
+    if [ "$part" = "$flip" ]; then say "  That's the wtf-check drive itself."; continue; fi
+    open_layers "$part" || { cleanup; continue; }
+    mount_system "$RESULT" || { cleanup; continue; }
+    break
+done
+
+say "  Mounted read-only at $TARGET:"
+grep -E "^PRETTY_NAME=" "$TARGET/etc/os-release" 2>/dev/null | sed -e 's/^PRETTY_NAME=//' -e 's/"//g' -e 's/^/    /'
+
+# 3. Separate /home?
+if [ -z "$(ls -A "$TARGET/home" 2>/dev/null)" ]; then
+    say "  $TARGET/home is empty: your home folders may be on another partition."
+    ask "  Partition for /home (e.g. nvme0n1p3), or Enter to skip: "
+    if [ -n "$REPLY" ] && [ -b "/dev/${REPLY#/dev/}" ]; then
+        open_layers "/dev/${REPLY#/dev/}" && ro_mount "$RESULT" "$TARGET/home"
+    fi
+fi
+
+# 4. Scan.
+hr
+stamp=$(date +%Y%m%d-%H%M%S)
+txt="$OUTDIR/wtf-report-$stamp.txt"
+say "Scanning... (this takes a minute; integrity checks hash system binaries)"
+wtf-check --root "$TARGET" --no-color > "$txt" 2>&1
+code=$?
+wtf-check --root "$TARGET" --json > "$OUTDIR/wtf-report-$stamp.json" 2>/dev/null
+sync
+hr
+sed -n '/== Summary ==/,$p' "$txt"
+hr
+case $code in
+    0) say "Result: nothing above LOW." ;;
+    1) say "Result: MEDIUM findings — read the report." ;;
+    2) say "Result: HIGH findings — read the report carefully." ;;
+    *) say "Result: the scan reported an error (exit $code); see the report." ;;
+esac
+say "Report saved as: ${txt#"$REPORTS"/}"
+if yes_no "View the full report now (q to quit the viewer)?"; then
+    less "$txt" 2>/dev/null || more "$txt" 2>/dev/null || cat "$txt"
+fi
+
+# 5. Clean up.
+cleanup
+[ -n "$flip" ] && umount "$REPORTS" 2>/dev/null
+sync
+hr
+say "Done. All disks are unmounted; it's safe to power off."
+say "To read the report later: open the Flipper's Mass Storage image on any computer, folder 'reports'."
+hr
+exit 0

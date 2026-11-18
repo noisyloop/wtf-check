@@ -30,10 +30,11 @@ it from the outside with `--root`.
 > **Safety first:** this guide only **reads** your disk. Every mount command
 > below is read-only. Don't remove the `ro` options.
 
-> **Have a Flipper Zero?** Setup gets easier: use the Flipper as a small USB
-> drive for wtf-check and the reports, and write the Arch ISO to any ordinary
-> stick, with no Ventoy needed. See [Using a Flipper Zero](#using-a-flipper-zero),
-> then follow steps 3 and 5–8, using `/run/flipper` wherever they say `/run/usb`.
+> **Have a Flipper Zero?** You may not need this guide at all:
+> [FLIPPER.md](FLIPPER.md) boots the computer **from the Flipper alone** into a
+> guided, read-only scan. That means no USB stick, no ISO and no typed mount
+> commands. If you'd rather use the full Arch ISO, the Flipper can still
+> replace the second drive; see [Using a Flipper Zero](#using-a-flipper-zero).
 
 ---
 
@@ -325,6 +326,10 @@ on any computer.
 ---
 
 ## Using a Flipper Zero
+
+> **Easier:** [FLIPPER.md](FLIPPER.md) boots straight from the Flipper, with no
+> Arch ISO or stick needed. This section is for using the Flipper *alongside*
+> the Arch ISO.
 
 The Flipper's **Mass Storage** app shows a disk image stored on its microSD
 card to the computer as a USB drive. That's plenty for wtf-check (under 2 MB)

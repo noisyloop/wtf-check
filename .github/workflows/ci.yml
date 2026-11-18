@@ -1,0 +1,31 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust (rustup is preinstalled on the runner)
+        run: rustup toolchain install stable --profile minimal -c clippy && rustup default stable
+      - run: cargo build --release --locked
+      - run: cargo test --locked
+      - run: cargo clippy --locked -- -D warnings
+      - name: Static (musl) build
+        run: |
+          rustup target add x86_64-unknown-linux-musl
+          cargo build --release --locked --target x86_64-unknown-linux-musl
+      - name: Smoke test against the runner itself
+        run: |
+          set +e
+          sudo ./target/x86_64-unknown-linux-musl/release/wtf-check --no-color --min-severity med
+          code=$?
+          echo "exit code $code"
+          # 0-2 are normal results; 3 means an error.
+          test "$code" -le 2

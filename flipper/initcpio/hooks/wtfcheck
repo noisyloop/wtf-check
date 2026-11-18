@@ -1,0 +1,20 @@
+#!/usr/bin/ash
+# Runtime hook: run the guided scan instead of booting a system, then
+# power off. Nothing is mounted from the scanned disk before this runs.
+
+run_hook() {
+    # Give USB devices (including the Flipper itself) time to appear.
+    udevadm settle --timeout=10 2>/dev/null
+    /usr/local/bin/wtf-scan
+    while :; do
+        printf 'Press Enter to power off, or type "shell" for a shell: '
+        read -r ans
+        if [ "$ans" = shell ]; then
+            sh -i
+        else
+            break
+        fi
+    done
+    sync
+    poweroff -f 2>/dev/null || echo o > /proc/sysrq-trigger
+}

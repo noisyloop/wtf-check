@@ -1,0 +1,51 @@
+# Build and install from source on Arch Linux:
+#   cd packaging/arch && makepkg -si
+# This builds the latest commit; nothing here is downloaded except the
+# git repository itself and the Rust toolchain from the official repos.
+
+pkgname=wtf-check-git
+pkgver=r0
+pkgrel=1
+pkgdesc="Read-only Linux persistence and rootkit auditor (Arch-aware, std-only Rust)"
+arch=(x86_64 aarch64)
+url="https://github.com/noisyloop/wtf-check"
+license=(MIT)
+depends=(gcc-libs glibc)
+makedepends=(cargo git)
+optdepends=('bpftool: list loaded eBPF programs')
+provides=(wtf-check)
+conflicts=(wtf-check)
+source=("git+https://github.com/noisyloop/wtf-check.git")
+sha256sums=(SKIP)
+
+pkgver() {
+  cd wtf-check
+  printf "r%s.%s" "$(git rev-list --count HEAD)" "$(git rev-parse --short HEAD)"
+}
+
+prepare() {
+  cd wtf-check
+  export RUSTUP_TOOLCHAIN=stable
+  cargo fetch --locked --target "$(rustc -vV | sed -n 's/host: //p')"
+}
+
+build() {
+  cd wtf-check
+  export RUSTUP_TOOLCHAIN=stable
+  export CARGO_TARGET_DIR=target
+  cargo build --frozen --release
+}
+
+check() {
+  cd wtf-check
+  export RUSTUP_TOOLCHAIN=stable
+  cargo test --frozen
+}
+
+package() {
+  cd wtf-check
+  install -Dm755 target/release/wtf-check "$pkgdir/usr/bin/wtf-check"
+  install -Dm644 LICENSE "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
+  install -Dm644 README.md "$pkgdir/usr/share/doc/$pkgname/README.md"
+  install -Dm644 docs/*.md -t "$pkgdir/usr/share/doc/$pkgname/docs/"
+}
