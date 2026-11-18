@@ -30,6 +30,11 @@ it from the outside with `--root`.
 > **Safety first:** this guide only **reads** your disk. Every mount command
 > below is read-only. Don't remove the `ro` options.
 
+> **Have a Flipper Zero?** Setup gets easier: use the Flipper as a small USB
+> drive for wtf-check and the reports, and write the Arch ISO to any ordinary
+> stick, with no Ventoy needed. See [Using a Flipper Zero](#using-a-flipper-zero),
+> then follow steps 3 and 5–8, using `/run/flipper` wherever they say `/run/usb`.
+
 ---
 
 ## Step 1: Make the stick bootable with Ventoy
@@ -319,6 +324,85 @@ on any computer.
 
 ---
 
+## Using a Flipper Zero
+
+The Flipper's **Mass Storage** app shows a disk image stored on its microSD
+card to the computer as a USB drive. That's plenty for wtf-check (under 2 MB)
+and the reports. The Flipper's USB is far too slow to boot the Arch ISO from,
+so the ISO goes on a normal stick.
+
+This replaces steps 1, 2 (the wtf-check part), 4 and the end of step 9. Steps 3
+and 5–8 stay the same, with `/run/flipper` in place of `/run/usb`.
+
+**A. Write the Arch ISO to an ordinary stick.** Download and verify it as in
+step 2, then write it. This **erases** the stick:
+
+```sh
+lsblk                       # find the stick, e.g. /dev/sdb (whole disk, not sdb1)
+sudo dd if=archlinux-*-x86_64.iso of=/dev/sdX bs=4M status=progress oflag=sync
+```
+
+On Windows, use [Rufus](https://rufus.ie) and pick **DD image** mode when it
+asks. Double-check `sdX`, and make sure it isn't the Flipper.
+
+**B. Make a small drive on the Flipper.**
+
+1. If the **Mass Storage** app isn't on your Flipper yet, install it from the
+   Flipper app catalog (USB category) with the Flipper mobile app or qFlipper.
+2. On the Flipper, open **Apps → USB → Mass Storage**, create a new image of
+   **64 MB**, and start it.
+3. Connect the Flipper to the trusted computer with a **data** USB-C cable
+   (some cables only charge).
+4. The new drive is blank. Format it as FAT with the label `WTFCHECK`:
+   - Windows / macOS: accept the prompt to format the new disk (macOS: Disk
+     Utility, MS-DOS FAT) and name it `WTFCHECK`.
+   - Linux: find the 64 MB disk with `lsblk`, then
+     `sudo mkfs.fat -n WTFCHECK /dev/sdX` (double-check `sdX`).
+5. Copy the static `wtf-check` build from step 2 onto it, plus your baseline if
+   you have one, and write down its `sha256sum`.
+6. Eject the drive, then exit the Mass Storage app. The image stays on the
+   Flipper's SD card for next time.
+
+**C. In the live session (replaces step 4).** Boot from the Arch stick as in
+step 3. At the `root@archiso` prompt, start the Mass Storage app with your
+image on the Flipper, plug it in, and run:
+
+```sh
+mkdir -p /run/flipper
+mount /dev/disk/by-label/WTFCHECK /run/flipper
+cp /run/flipper/wtf-check /tmp/wtf-check
+chmod +x /tmp/wtf-check
+sha256sum /tmp/wtf-check    # must match what you wrote down
+```
+
+Then follow steps 5–8, saving reports to the Flipper:
+
+```sh
+/tmp/wtf-check --root /mnt --no-color | tee /run/flipper/wtf-report.txt
+/tmp/wtf-check --root /mnt --json > /run/flipper/wtf-report.json
+```
+
+**D. Finish (replaces the end of step 9).**
+
+```sh
+umount -R /mnt
+sync
+umount /run/flipper
+reboot
+```
+
+**Keep the Mass Storage app open until you've unmounted.** Leaving the app or
+unplugging the Flipper before `umount /run/flipper` can lose or corrupt your
+report. To read the report later, open the same image in the Mass Storage app
+on any computer.
+
+> **Why not let the Flipper type the commands (BadUSB)?** Steps 5–6 depend on
+> your own disk layout, and a script typing blind as root, possibly with the
+> wrong keyboard layout, can mount or unlock the wrong thing. Typing the fixed
+> commands above takes about a minute.
+
+---
+
 ## Troubleshooting
 
 | Problem | Fix |
@@ -332,6 +416,8 @@ on any computer.
 | `/mnt` only shows `@` folders | btrfs subvolumes. See step 6C. |
 | The report lists no homes | `/home` is on a separate partition or the `@home` subvolume, and isn't mounted yet. See step 6. |
 | Keys type the wrong letters | Set your keyboard layout with `loadkeys` (step 3). |
+| Flipper doesn't show up as a drive | The Mass Storage app isn't running with your image, or the cable only charges. Start the app first, then try another USB-C cable. |
+| `/dev/disk/by-label/WTFCHECK` doesn't exist | The Flipper drive wasn't formatted with that label. Find the 64 MB disk with `lsblk -f` and mount it by name, e.g. `mount /dev/sdc /run/flipper`. |
 | Nothing found | Good news, but not proof: wtf-check covers the common persistence spots, not every possible compromise. |
 
 ## Not on Arch?
