@@ -1,0 +1,17 @@
+[package]
+name = "wtf-check"
+version = "0.1.0"
+edition = "2021"
+description = "Read-only Linux persistence auditor (Arch-aware, std-only)"
+license = "MIT"
+readme = "README.md"
+
+# Intentionally no dependencies: std only (supply-chain safety).
+[dependencies]
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+panic = "unwind"
+strip = true
